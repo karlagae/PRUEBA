@@ -7,9 +7,22 @@ import numpy as np
 from datetime import datetime, timedelta
 
 # Funciones auxiliares
-def obtener_datos_acciones(simbolos, start_date, end_date):
-    data = yf.download(simbolos, start=start_date, end=end_date)['Close']
-    return data.ffill().dropna()
+# Obtener datos
+all_symbols = simbolos + [benchmark]
+df_stocks = obtener_datos_acciones(all_symbols, start_date, end_date)
+
+# Verificar si se obtuvieron datos
+if df_stocks.empty:
+    st.error("No se obtuvieron datos para los símbolos y el rango de fechas seleccionados. Verifique los símbolos y el rango.")
+else:
+    # Proceder con los cálculos si hay datos
+    returns, cumulative_returns, normalized_prices = calcular_metricas(df_stocks)
+
+
+
+
+
+
 
 def calcular_metricas(df):
     returns = df.pct_change().dropna()

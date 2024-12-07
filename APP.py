@@ -1,87 +1,112 @@
-import numpy as np
+import yfinance as yf
 import pandas as pd
-from scipy.optimize import minimize
+import numpy as np
+import plotly.graph_objects as go
+from datetime import datetime
+import streamlit as st
+from streamlit_option_menu import option_menu  # Para un menú de navegación atractivo
 
-# ------------------------------
-# Datos iniciales y benchmark
-# ------------------------------
-# Supongamos que tienes los rendimientos históricos de tus activos seleccionados
-# (renombrados como activos A, B, C, etc.)
-rendimientos_historicos = pd.DataFrame({
-    "Activo_A": np.random.normal(0.02, 0.05, 252),
-    "Activo_B": np.random.normal(0.015, 0.04, 252),
-    "Activo_C": np.random.normal(0.01, 0.03, 252)
-})
-
-# Cálculo de la media y covarianza histórica
-rendimientos_medios = rendimientos_historicos.mean()
-matriz_covarianza = rendimientos_historicos.cov()
-
-# Definir un benchmark con pesos equitativos
-num_activos = rendimientos_historicos.shape[1]
-pesos_benchmark = np.ones(num_activos) / num_activos
-rendimiento_benchmark = np.dot(pesos_benchmark, rendimientos_medios)
-
-# ------------------------------
-# Views (perspectivas del analista)
-# ------------------------------
-# Ejemplo: Perspectiva relativa y absoluta
-# Aquí debes justificar los views en 5 bullets (agregar en comentarios).
-
-# Views relativos: activo B sobreperforma a activo C por 1% adicional
-Q = np.array([0.01])  # Rendimiento esperado adicional para el view relativo
-
-# Matriz P: relación entre activos para el view
-P = np.array([
-    [0, 1, -1]  # Relación entre activo B y activo C
-])
-
-# ------------------------------
-# Parámetros del modelo Black-Litterman
-# ------------------------------
-# Calcular la distribución a priori
-tau = 0.05  # Escalar de incertidumbre del mercado
-prior_cov = tau * matriz_covarianza
-omega = np.dot(np.dot(P, prior_cov), P.T)  # Incertidumbre en los views
-
-# Calcular los rendimientos esperados ajustados (posteriores)
-inv_cov_prior = np.linalg.inv(prior_cov)
-inv_omega = np.linalg.inv(omega)
-
-# Fórmula Black-Litterman
-posterior_mean = np.dot(
-    np.linalg.inv(inv_cov_prior + np.dot(P.T, inv_omega).dot(P)),
-    (inv_cov_prior.dot(rendimientos_medios) + np.dot(P.T, inv_omega).dot(Q))
+# Configuración inicial de la página
+st.set_page_config(
+    page_title="Análisis de ETFs",
+    page_icon="📈",
+    layout="wide"
 )
 
-posterior_cov = np.linalg.inv(inv_cov_prior + np.dot(P.T, inv_omega).dot(P))
+# Encabezado y descripción
+st.title("📊 Análisis Avanzado de ETFs")
+st.markdown("""
+Explora y analiza las principales métricas estadísticas de los ETFs seleccionados.
+Optimiza tu portafolio con Sharpe Ratio o mínima volatilidad y visualiza la frontera eficiente.
+""")
 
-# ------------------------------
-# Optimización del portafolio
-# ------------------------------
-# Función objetivo (maximizar el ratio Sharpe)
-def objetivo(pesos, rendimientos, covarianza, aversion_riesgo=2):
-    rendimiento = np.dot(pesos, rendimientos)
-    riesgo = np.dot(pesos.T, np.dot(covarianza, pesos))
-    utilidad = rendimiento - (aversion_riesgo / 2) * riesgo
-    return -utilidad  # Minimizar utilidad negativa
+# Sidebar con menú de navegación
+with st.sidebar:
+    selected = option_menu(
+        "Menú",
+        ["Introducción", "Análisis Estadístico", "Optimización de Portafolios"],
+        icons=["house", "bar-chart-line", "gear"],
+        menu_icon="menu-up",
+        default_index=0
+    )
 
-# Restricciones: suma de pesos = 1, no ventas en corto
-restricciones = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
-limites = tuple((0, 1) for _ in range(num_activos))
+# Función para obtener datos históricos
+@st.cache
+def obtener_datos_acciones(simbolos, start_date, end_date):
+    data = yf.download(simbolos, start=start_date, end=end_date)['Close']
+    return data.ffill().dropna()
 
-# Optimización
-pesos_iniciales = np.ones(num_activos) / num_activos
-result = minimize(
-    objetivo, pesos_iniciales, args=(posterior_mean, posterior_cov),
-    method='SLSQP', bounds=limites, constraints=restricciones
-)
+# Funciones para cálculos
+def calcular_metricas(df):
+    returns = df.pct_change().dropna()
+    media = returns.mean()
+    sesgo = returns.skew()
+    curtosis = returns.kurtosis()
+    return returns, media, sesgo, curtosis
 
-# Pesos óptimos
-pesos_optimos = result.x
+def calcular_var_cvar(returns, confidence=0.95):
+    VaR = returns.quantile(1 - confidence)
+    CVaR = returns[returns <= VaR].mean()
+    return VaR, CVaR
 
-# ------------------------------
-# Resultados finales
-# ------------------------------
-print("Rendimientos esperados ajustados:", posterior_mean)
-print("Pesos óptimos del portafolio:", pesos_optimos)
+def calcular_drawdown(returns):
+    cumulative_returns = (1 + returns).cumprod() - 1
+    drawdown = cumulative_returns - cumulative_returns.cummax()
+    return drawdown.min()
+
+def calcular_sharpe_ratio(returns, risk_free_rate=0.02):
+    excess_returns = returns - risk_free_rate / 252
+    return np.sqrt(252) * excess_returns.mean() / excess_returns.std()
+
+def calcular_sortino_ratio(returns, risk_free_rate=0.02, target_return=0):
+    excess_returns = returns - risk_free_rate / 252
+    downside_returns = excess_returns[excess_returns < target_return]
+    downside_deviation = np.sqrt(np.mean(downside_returns**2))
+    return (np.sqrt(252) * excess_returns.mean() / downside_deviation
+            if downside_deviation != 0 else np.nan)
+
+# Lógica según la selección del menú
+if selected == "Introducción":
+    st.header("Bienvenido")
+    st.write("""
+    Esta herramienta utiliza datos históricos para calcular métricas avanzadas de ETFs, optimizar portafolios,
+    y simular la frontera eficiente.
+    """)
+
+elif selected == "Análisis Estadístico":
+    st.header("🔍 Análisis Estadístico de ETFs")
+
+    etfs = ["LQD", "EMB", "VTI", "EEM", "GLD"]
+    selected_etfs = st.multiselect("Selecciona los ETFs para analizar", etfs, default=etfs)
+    start_date = st.date_input("Fecha de inicio", datetime(2010, 1, 1))
+    end_date = st.date_input("Fecha de fin", datetime(2023, 12, 31))
+
+    if st.button("Calcular métricas"):
+        data = obtener_datos_acciones(selected_etfs, start_date, end_date)
+        df_resultados = pd.DataFrame()
+
+        for etf in selected_etfs:
+            returns, media, sesgo, curtosis = calcular_metricas(data[etf])
+            var_95, cvar_95 = calcular_var_cvar(returns)
+            drawdown = calcular_drawdown(returns)
+            sharpe = calcular_sharpe_ratio(returns)
+            sortino = calcular_sortino_ratio(returns)
+            df_resultados[etf] = {
+                "Media": media,
+                "Sesgo": sesgo,
+                "Curtosis": curtosis,
+                "VaR 95%": var_95,
+                "CVaR 95%": cvar_95,
+                "Drawdown": drawdown,
+                "Sharpe Ratio": sharpe,
+                "Sortino Ratio": sortino
+            }
+        st.subheader("📋 Resultados:")
+        st.dataframe(df_resultados.T.style.format("{:.2%}"))
+
+elif selected == "Optimización de Portafolios":
+    st.header("⚙️ Optimización de Portafolios")
+
+    st.write("Simula portafolios, maximiza Sharpe Ratio o minimiza volatilidad, y visualiza la Frontera Eficiente.")
+    # Aquí incluirás las funciones de optimización y la gráfica de la frontera eficiente.
+

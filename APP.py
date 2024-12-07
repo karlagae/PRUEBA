@@ -31,7 +31,7 @@ st.line_chart(data)
 st.sidebar.header("Parámetros del Modelo Black-Litterman")
 risk_free_rate = st.sidebar.number_input("Tasa libre de riesgo (%)", value=2.0) / 100
 tau = st.sidebar.number_input("Tau (escala de incertidumbre)", value=0.05)
-P = st.sidebar.text_area("Matriz P (opciones del inversor)", "1 0 -1\n0 1 -1")
+P = st.sidebar.text_area("Matriz P (opciones del inversor)", "1 0 -1 0\n0 1 0 -1")
 Q = st.sidebar.text_area("Matriz Q (retornos esperados, en %)", "0.02\n0.01")
 
 # Matrices P y Q
@@ -42,11 +42,12 @@ except ValueError:
     st.error("Error en las matrices P o Q. Por favor, revisa el formato.")
     P_matrix, Q_vector = None, None
 
-# Cálculo de los pesos usando Black-Litterman
-if P_matrix is not None and Q_vector is not None:
+# Comprobación de la dimensión de la matriz P
+if P_matrix is not None:
     if P_matrix.shape[1] != len(tickers_list):
-        st.error("La matriz P no tiene el número adecuado de columnas para coincidir con los activos.")
+        st.error(f"La matriz P debe tener {len(tickers_list)} columnas para coincidir con los activos del portafolio.")
     else:
+        # Cálculo de los pesos usando Black-Litterman
         market_cap = np.ones(len(tickers_list)) / len(tickers_list)  # Capitalización igualitaria
         cov_matrix = returns.cov().values
         pi = market_cap @ cov_matrix  # Retornos implícitos del mercado

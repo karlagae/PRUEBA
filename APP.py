@@ -67,21 +67,37 @@ if "max_sr_resultados" not in st.session_state:
     st.session_state.max_sr_resultados = None
 if "min_obj_resultados" not in st.session_state:
     st.session_state.min_obj_resultados = None
+opt_bool = False  # Valor predeterminado
+
+import streamlit as st
+
+# Ejemplo de control con un checkbox
+opt_bool = st.checkbox("¿Ejecutar optimización?", value=False)
+
+# O si depende de otro control (por ejemplo, un botón)
+if st.button("Ejecutar optimización"):
+    opt_bool = True
 
 # Verificar que `opt_bool` y los datos estén definidos antes de optimizar
 if opt_bool:
-    if st.session_state.returns1 is not None:
+    # Verifica si los datos necesarios están disponibles (ej. 'returns1' en session_state)
+    if st.session_state.get('returns1') is not None:
         try:
+            # Optimización de Maximum Sharpe Ratio (por ejemplo)
             st.session_state.max_sr_resultados = max_sr_opt(st.session_state.returns1)
             st.success("Maximum Sharpe Ratio Portfolio successfully optimized!")
         except Exception as e:
-            st.warning(f"An error occurred: {e}")
+            st.warning(f"An error occurred while optimizing Maximum Sharpe Ratio: {e}")
 
         try:
+            # Optimización de Minimum Volatility Portfolio
             st.session_state.min_obj_resultados = min_vol_obj_opt(st.session_state.returns1, r_obj)
             st.success("Minimum Volatility Portfolio with Target Return successfully optimized!")
         except Exception as e:
-            st.warning(f"An error occurred: {e}")
+            st.warning(f"An error occurred while optimizing Minimum Volatility Portfolio: {e}")
+    else:
+        st.warning("No data found for optimization!")
+
 
 # Mostrar resultados de optimización
 if st.session_state.max_sr_resultados is not None:

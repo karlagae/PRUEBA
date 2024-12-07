@@ -52,6 +52,11 @@ if P_matrix is not None and Q_vector is not None:
     M_inverse = np.linalg.inv(tau * cov_matrix)
     Omega_inverse = np.linalg.inv(np.diag(np.full(P_matrix.shape[0], tau)))
 
+    # Imprimir las dimensiones de las matrices involucradas
+    st.write(f"Dimensiones de M_inverse: {M_inverse.shape}")
+    st.write(f"Dimensiones de P_matrix: {P_matrix.shape}")
+    st.write(f"Dimensiones de Omega_inverse: {Omega_inverse.shape}")
+
     try:
         # Verificar si la matriz es invertible antes de calcular la inversa
         combined_matrix = M_inverse + P_matrix.T @ Omega_inverse @ P_matrix
@@ -90,9 +95,6 @@ expected_returns = returns.mean()
 portfolio_return = weights_bl @ expected_returns
 portfolio_risk = np.sqrt(weights_bl @ cov_matrix @ weights_bl.T)
 
-st.write(f"Dimensiones de M_inverse: {M_inverse.shape}")
-st.write(f"Dimensiones de P_matrix: {P_matrix.shape}")
-st.write(f"Dimensiones de Omega_inverse: {Omega_inverse.shape}")
 st.write(f"**Retorno esperado:** {portfolio_return:.2%}")
 st.write(f"**Riesgo (desviación estándar):** {portfolio_risk:.2%}")
 

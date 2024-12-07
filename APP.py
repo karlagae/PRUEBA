@@ -7,6 +7,16 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
 
+
+
+
+
+# Descargar los datos del S&P 500 desde Yahoo Finance
+@st.cache_data
+def load_benchmark_data(symbol, start_date='2000-01-01'):
+    data = yf.download(symbol, start=start_date)
+    return data
+
 # Función para calcular estadísticas del portafolio
 def portfolio_stats(weights, returns, return_df=False):
     weights = np.array(weights)

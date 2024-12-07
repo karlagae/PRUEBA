@@ -1,223 +1,166 @@
-import streamlit as st
-import numpy as np
+#---------------------------------------------------------------------------------------------------#
+#                                      CARGA DE LIBRERIAS  
+
 import pandas as pd
-import datetime as dt
+import numpy as np
+from numpy.linalg import multi_dot
 import scipy.optimize as sco
+import yfinance as yf  # Importamos yfinance para obtener datos de Yahoo Finance
+import streamlit as st
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
-import yfinance as yf  # Importar yfinance para obtener los datos de Yahoo Finance
+import datetime as dt
 
-# Descargar los datos de los activos desde Yahoo Finance
-@st.cache_data
-def load_data(symbols, start_date='2000-01-01'):
-    data = yf.download(symbols, start=start_date)['Adj Close']
-    return data
+#---------------------------------------------------------------------------------------------------#
+#                                             PAGE INFO
 
-# Cargar los datos del S&P 500 y de otros activos que desees analizar
-symbols = ['^GSPC', 'AAPL', 'MSFT', 'GOOG']  # Ejemplo de símbolos: S&P 500 y grandes empresas
-prices = load_data(symbols)
+st.set_page_config(
+    page_title="Portfolio Optimization",
+    page_icon="mag"
+)
+st.title("Portfolio Optimization & Backtesting")
 
-# Calcular los retornos logarítmicos diarios
-returns = np.log(prices / prices.shift(1))
+#---------------------------------------------------------------------------------------------------#
+# CARGA DE DATOS DE YAHOO FINANCE
 
-# Función para calcular estadísticas del portafolio
+# Definimos los tickers que queremos analizar
+tickers = st.text_input("Introduce los tickers separados por comas (ej. AAPL, MSFT, GOOGL):", "AAPL, MSFT, GOOGL")
+
+# Definimos el rango de fechas
+start_date = st.date_input("Fecha de inicio:", value=dt.date(2021, 1, 1))
+end_date = st.date_input("Fecha de fin:", value=dt.date(2023, 1, 1))
+
+if st.button("Cargar datos"):
+    # Cargamos los datos de Yahoo Finance
+    data = yf.download(tickers, start=start_date, end=end_date)['Adj Close']
+    st.session_state.data = data
+    st.session_state.returns = data.pct_change().dropna()
+    st.success("Datos cargados exitosamente.")
+    st.write("Precios de cierre ajustados:")
+    st.dataframe(data.tail())
+    st.write("Retornos diarios:")
+    st.dataframe(st.session_state.returns.tail())
+else:
+    st.warning("Por favor, introduce los tickers y selecciona las fechas para cargar los datos.")
+
+#---------------------------------------------------------------------------------------------------#
+#                                 OPTIMIZACION DE PORTAFOLIOS
+
+# Definimos la función portfolio stats para calcular retornos, volatilidad y Sharpe ratio de los portafolios
 def portfolio_stats(weights, returns, return_df=False):
-    weights = np.array(weights)
-    portfolio_return = np.dot(weights, returns.mean())
-    portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov(), weights)))
-    sharpe_ratio = portfolio_return / portfolio_volatility
-
+    weights = np.array(weights)[:, np.newaxis]
+    port_rets = weights.T @ np.array(returns.mean() * 252)[:, np.newaxis]
+    port_vols = np.sqrt(multi_dot([weights.T, returns.cov() * 252, weights]))
+    sharpe_ratio = port_rets / port_vols
+    resultados = np.array([port_rets, port_vols, sharpe_ratio]).flatten()
+    
     if return_df:
-        data = {
-            "Resultado": [portfolio_return, portfolio_volatility, sharpe_ratio],
-            "Métrica": ["Retorno", "Volatilidad", "Ratio de Sharpe"]
-        }
-        return pd.DataFrame(data).set_index("Métrica")
+        return pd.DataFrame(data=np.round(resultados, 4),
+                            index=["Returns", "Volatility", "Sharpe_Ratio"],
+                            columns=["Resultado"])
     else:
-        return portfolio_return, portfolio_volatility, sharpe_ratio
+        return resultados
 
-# Función para obtener la volatilidad
+st.markdown("## Optimization :muscle:")
+
+# Definimos las fechas sobre las que queremos optimizar el portafolio
+opt_range = st.slider("Selecciona un rango de fechas:", min_value=start_date, 
+                      max_value=end_date, value=(start_date, end_date),
+                      format="YYYY-MM-DD") 
+st.session_state.start_date_opt, st.session_state.end_date_opt = opt_range
+
+st.write("Inicio:", st.session_state.start_date_opt)
+st.write("Fin:", st.session_state.end_date_opt)
+
+if "returns1" not in st.session_state:
+    st.session_state.returns1 = None
+
+# Guardamos los retornos en un nuevo df
+if st.session_state.returns is not None:
+    st.session_state.returns1 = st.session_state.returns.loc[st.session_state.start_date_opt:st.session_state.end_date_opt]
+
+# ingresar el rendimiento objetivo del portafolio de mínima varianza con rendimiento objetivo
+r_obj = st.number_input(
+    "Especifica el rendimiento objetivo para el portafolio de mínima volatilidad:",
+    value=0.1, min_value=0.0, max_value=1.0
+)
+
+opt_bool = False
+if st.button("¡Vamos!"):
+    opt_bool = True
+
+# Definimos la función que nos ayudará a obtener la volatilidad del portafolio
 def get_volatility(weights, returns):
     return portfolio_stats(weights, returns)[1]
 
-# Optimización de Sharpe Ratio Máximo
-def max_sr_opt(returns):
-    cons = {'type': 'eq', 'fun': lambda x: sum(x) - 1}
-    bnds = tuple((0, 1) for _ in range(len(returns.columns)))
-    initial_wts = np.array(len(returns.columns) * [1. / len(returns.columns)])
-    
-    opt_sr = sco.minimize(fun=lambda x: -portfolio_stats(x, returns)[2], 
-                          x0=initial_wts, bounds=bnds, constraints=cons)
-    
-    max_sr_pesos = pd.DataFrame(data=np.around(opt_sr['x'] * 100, 2),
-                                index=returns.columns, 
-                                columns=["Max_SR"])
-    max_sr_stats = portfolio_stats(opt_sr['x'], returns, return_df=True)
-    max_sr_stats = max_sr_stats.rename(columns={"Resultado": "Max_SR"})
-    
-    return {"max_sr_pesos": max_sr_pesos, "max_sr_stats": max_sr_stats}
+# Función para optimizar el portafolio bajo mínima volatilidad
+def min_vol_opt(returns):
+    cons = ({'type': 'eq', 'fun': lambda x: sum(x) - 1})  # Restricción de que la suma de los pesos sea 1
+    bnds = tuple((0, 1) for x in range(len(returns.columns)))  # Restricción de que los pesos estén entre 0 y 1
+        initial_wts = np.array(len(returns.columns) * [1. / len(returns.columns)])  # Pesos iniciales
 
-# Optimización de Mínima Volatilidad con Retorno Objetivo
-def min_vol_obj_opt(returns, r_obj):
-    cons = ({'type': 'eq', 'fun': lambda x: portfolio_stats(x, returns)[0] - r_obj},
-            {'type': 'eq', 'fun': lambda x: sum(x) - 1})
-    bnds = tuple((0, 1) for _ in range(len(returns.columns)))
-    initial_wts = np.array(len(returns.columns) * [1. / len(returns.columns)])
-    
-    opt_min_obj = sco.minimize(fun=get_volatility, x0=initial_wts, args=(returns), 
-                               method='SLSQP', bounds=bnds, constraints=cons)
-    
-    min_obj_pesos = pd.DataFrame(data=np.around(opt_min_obj['x'] * 100, 2),
-                                 index=returns.columns, 
-                                 columns=["Min_Vol_Obj"])
-    min_obj_stats = portfolio_stats(opt_min_obj['x'], returns, return_df=True)
-    min_obj_stats = min_obj_stats.rename(columns={"Resultado": "Min_Vol_Obj"})
-    
-    return {"min_obj_pesos": min_obj_pesos, "min_obj_stats": min_obj_stats}
+    # Optimización
+    result = sco.minimize(get_volatility, initial_wts, args=(returns,), method='SLSQP', bounds=bnds, constraints=cons)
+    return result
 
-# Variables globales para los resultados de optimización
-if "max_sr_resultados" not in st.session_state:
-    st.session_state.max_sr_resultados = None
-if "min_obj_resultados" not in st.session_state:
-    st.session_state.min_obj_resultados = None
+if opt_bool and st.session_state.returns1 is not None:
+    # Ejecutamos la optimización
+    optimal_weights = min_vol_opt(st.session_state.returns1)
 
-# Ejemplo de control con un checkbox
-opt_bool = st.checkbox("¿Ejecutar optimización?", value=False)
+    # Mostramos los resultados
+    st.write("Pesos óptimos del portafolio:")
+    st.write(optimal_weights.x)
 
-# O si depende de otro control (por ejemplo, un botón)
-if st.button("Ejecutar optimización"):
-    opt_bool = True
+    # Calculamos estadísticas del portafolio óptimo
+    stats = portfolio_stats(optimal_weights.x, st.session_state.returns1, return_df=True)
+    st.write("Estadísticas del portafolio óptimo:")
+    st.dataframe(stats)
 
-# Verificar que `opt_bool` y los datos estén definidos antes de optimizar
-if opt_bool:
-    # Verifica si los datos necesarios están disponibles (ej. 'returns' en session_state)
-    if returns is not None:
-        try:
-            # Optimización de Maximum Sharpe Ratio (por ejemplo)
-            st.session_state.max_sr_resultados = max_sr_opt(returns)
-            st.success("Maximum Sharpe Ratio Portfolio successfully optimized!")
-        except Exception as e:
-            st.warning(f"An error occurred while optimizing Maximum Sharpe Ratio: {e}")
+    # Gráfica de la distribución de pesos
+    fig = go.Figure(data=[go.Pie(labels=st.session_state.returns1.columns, values=optimal_weights.x, hole=.3)])
+    fig.update_layout(title_text='Distribución de Pesos del Portafolio Óptimo')
+    st.plotly_chart(fig)
 
-        try:
-            # Optimización de Minimum Volatility Portfolio
-            r_obj = 0.05  # Definir un retorno objetivo
-            st.session_state.min_obj_resultados = min_vol_obj_opt(returns, r_obj)
-            st.success("Minimum Volatility Portfolio with Target Return successfully optimized!")
-        except Exception as e:
-            st.warning(f"An error occurred while optimizing Minimum Volatility Portfolio: {e}")
-    else:
-        st.warning("No data found for optimization!")
+#---------------------------------------------------------------------------------------------------#
+#                                 BACKTESTING DEL PORTAFOLIO
 
-# Mostrar resultados de optimización
-if st.session_state.max_sr_resultados is not None:
-    st.subheader("Maximum Sharpe Ratio Portfolio")
-    st.dataframe(st.session_state.max_sr_resultados["max_sr_pesos"])
-    st.dataframe(st.session_state.max_sr_resultados["max_sr_stats"])
+st.markdown("## Backtesting :chart_with_upwards_trend:")
 
-if st.session_state.min_obj_resultados is not None:
-    st.subheader("Minimum Volatility with Target Return Portfolio")
-    st.dataframe(st.session_state.min_obj_resultados["min_obj_pesos"])
-    st.dataframe(st.session_state.min_obj_resultados["min_obj_stats"])
+if st.button("Ejecutar Backtest"):
+    if st.session_state.data is not None and opt_bool:
+        # Simulamos el rendimiento del portafolio
+        portfolio_returns = (st.session_state.returns1 * optimal_weights.x).sum(axis=1)
+        cumulative_returns = (1 + portfolio_returns).cumprod()
 
-# Comparar pesos y métricas entre portafolios
-if st.session_state.min_obj_resultados is not None and st.session_state.max_sr_resultados is not None:
-    st.subheader("Portfolio Weights Comparison")
-    try:
-        resultados_pesos = st.session_state.max_sr_resultados["max_sr_pesos"].merge(
-            st.session_state.min_obj_resultados["min_obj_pesos"], left_index=True, right_index=True
-        )
-        st.session_state.resultados_pesos = resultados_pesos
+        # Gráfica de rendimiento acumulado
+        plt.figure(figsize=(10, 6))
+        plt.plot(cumulative_returns, label='Rendimiento del Portafolio Óptimo', color='blue')
+        plt.title('Rendimiento Acumulado del Portafolio Óptimo')
+        plt.xlabel('Fecha')
+        plt.ylabel('Rendimiento Acumulado')
+        plt.legend()
+        plt.grid()
+        st.pyplot(plt)
 
-        # Graficar comparación de pesos
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-        for ax, (col, title) in zip(axes, resultados_pesos.iteritems()):
-            ax.pie(col, labels=col.index, autopct='%1.1f%%')
-            ax.set_title(title)
-        st.pyplot(fig)
+        # Estadísticas del rendimiento del portafolio
+        total_return = cumulative_returns.iloc[-1] - 1
+        annualized_return = (1 + total_return) ** (252 / len(cumulative_returns)) - 1
+        annualized_volatility = portfolio_returns.std() * np.sqrt(252)
+        sharpe_ratio = annualized_return / annualized_volatility
 
-    except Exception as e:
-        st.error(f"Error comparing weights: {e}")
+        st.write("Estadísticas del Backtest:")
+        st.write(f"Rendimiento Total: {total_return:.2%}")
+        st.write(f"Rendimiento Anualizado: {annualized_return:.2%}")
+        st.write(f"Volatilidad Anualizada: {annualized_volatility:.2%}")
+        st.write(f"Sharpe Ratio: {sharpe_ratio:.2f}")
 
-# Incorporar Backtesting
-def backtest_portfolio(weights, returns, initial_capital=10000):
-    """
-    Realiza el backtesting de un portafolio dado un conjunto de pesos, retornos históricos y capital inicial.
-    """
-    weights = np.array(weights)
-    # Simulando el rendimiento del portafolio multiplicando los pesos por los retornos de los activos
-    port_returns = np.dot(returns, weights)
-    
-    # Calculando el valor del portafolio con el capital inicial
-    portfolio_value = initial_capital * (1 + port_returns).cumprod()
-    
-    return portfolio_value
-
-
-
-
-
-
-
-
-
-
-
-
-# Función para comparar el rendimiento de diferentes portafolios con un benchmark
-def plot_backtest_comparison(returns, weights_max_sr, weights_min_vol_obj, benchmark_returns, initial_capital=10000):
-    """
-    Compara el rendimiento de los portafolios (Sharpe Ratio y Minimum Volatility) con un benchmark.
-    """
-    # Realizando el backtest para el portafolio con máximo Sharpe Ratio
-    portfolio_max_sr = backtest_portfolio(weights_max_sr, returns, initial_capital)
-    
-    # Realizando el backtest para el portafolio con mínima volatilidad
-    portfolio_min_vol_obj = backtest_portfolio(weights_min_vol_obj, returns, initial_capital)
-    
-    # Realizando el backtest para el benchmark
-    benchmark_value = initial_capital * (1 + benchmark_returns).cumprod()
-
-    # Graficar los resultados
-    plt.figure(figsize=(14, 7))
-    plt.plot(portfolio_max_sr, label='Portfolio Max Sharpe Ratio', color='blue')
-    plt.plot(portfolio_min_vol_obj, label='Portfolio Min Volatility', color='green')
-    plt.plot(benchmark_value, label='Benchmark', color='black', linestyle='--')
-    
-    plt.title('Backtest Comparison')
-    plt.xlabel('Fecha')
-    plt.ylabel('Valor del Portafolio')
-    plt.legend(loc='best')
-    plt.grid(True)
-    
-    # Mostrar el gráfico en Streamlit
-    st.pyplot(plt)
-
-# Cargar los datos históricos
-if 'benchmark_data' not in st.session_state:
-    # Suponiendo que el archivo 'sp500.csv' contiene los datos del benchmark
-    benchmark_data = pd.read_csv('sp500.csv', index_col='Date', parse_dates=True)
-    benchmark_returns = benchmark_data['Adj Close'].pct_change().dropna()
-    st.session_state.benchmark_data = benchmark_returns
-
-if 'returns1' not in st.session_state:
-    # Suponiendo que el archivo 'returns.csv' contiene los retornos de los activos
-    returns1 = pd.read_csv('returns.csv', index_col='Date', parse_dates=True)
-    st.session_state.returns1 = returns1.pct_change().dropna()
-
-# Verifica si los resultados de la optimización están disponibles en la sesión
-if 'max_sr_resultados' in st.session_state and 'min_obj_resultados' in st.session_state:
-    if st.session_state.max_sr_resultados is not None and st.session_state.min_obj_resultados is not None:
-        # Extraer los pesos optimizados de las soluciones
-        weights_max_sr = st.session_state.max_sr_resultados["max_sr_pesos"].values.flatten()
-        weights_min_vol_obj = st.session_state.min_obj_resultados["min_obj_pesos"].values.flatten()
-
-        # Obtener los retornos históricos del portafolio optimizado
-        portfolio_returns = st.session_state.returns1
-        
-        # Obtener los retornos históricos del benchmark
-        benchmark_returns = st.session_state.benchmark_data
-
-        # Ejecutar y graficar el backtesting de ambos portafolios comparados con el benchmark
-        plot_backtest_comparison(portfolio_returns, weights_max_sr, weights_min_vol_obj, benchmark_returns)
+        # Gráfica de los retornos diarios del portafolio
+        plt.figure(figsize=(10, 6))
+        plt.plot(portfolio_returns, label='Retornos Diarios del Portafolio Óptimo', color='orange')
+        plt.title('Retornos Diarios del Portafolio Óptimo')
+        plt.xlabel('Fecha')
+        plt.ylabel('Retorno Diario')
+        plt.legend()
+        plt.grid()
+        st.pyplot(plt)

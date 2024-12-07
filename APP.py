@@ -88,6 +88,9 @@ expected_returns = returns.mean()
 portfolio_return = weights_bl @ expected_returns
 portfolio_risk = np.sqrt(weights_bl @ cov_matrix @ weights_bl.T)
 
+st.write(f"Dimensiones de M_inverse: {M_inverse.shape}")
+st.write(f"Dimensiones de P_matrix: {P_matrix.shape}")
+st.write(f"Dimensiones de Omega_inverse: {Omega_inverse.shape}")
 st.write(f"**Retorno esperado:** {portfolio_return:.2%}")
 st.write(f"**Riesgo (desviación estándar):** {portfolio_risk:.2%}")
 # Añadir la visualización de la asignación óptima

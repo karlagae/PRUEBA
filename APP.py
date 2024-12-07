@@ -1,108 +1,184 @@
-import yfinance as yf
+# ---------------------------------------------------------------------------------------------------#
+#                                      OPTIMIZATION PAGE
+
+import streamlit as st
+import datetime as dt
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import streamlit as st
+import seaborn as sns
+import matplotlib.pyplot as plt
+from plotly import graph_objs as go
 
-# Configuración inicial
-st.title("Análisis de Portafolio con Modelo de Black-Litterman")
-st.sidebar.header("Parámetros del Portafolio")
+# Comprobamos que los datos necesarios están disponibles en la sesión
+if st.session_state.returns is not None:
+    st.markdown("## Optimization Results")
+    st.text(
+        "The table below contains the weights of each portfolio optimized using "
+        "three methods: Minimum Volatility, Maximum Sharpe Ratio, and Target Volatility. "
+        "Analyze the weights for the selected optimization methods."
+    )
 
-# Selección de tickers y fechas
-tickers = st.sidebar.text_input("Ingrese los tickers separados por comas", "AAPL, MSFT, GOOGL, AMZN")
-tickers_list = [t.strip() for t in tickers.split(",")]
+    # Convertir pesos de resultados a un DataFrame para mostrarlo
+    weights_df = pd.DataFrame(
+        st.session_state.resultados_pesos, index=st.session_state.returns.columns
+    )
 
-start_date = st.sidebar.date_input("Fecha de inicio", pd.to_datetime("2018-01-01"))
-end_date = st.sidebar.date_input("Fecha de fin", pd.to_datetime("2023-01-01"))
+    # Agregar el nombre de la estrategia como columna
+    weights_df.reset_index(inplace=True)
+    weights_df.rename(columns={"index": "Asset"}, inplace=True)
 
-# Descarga de datos
-@st.cache
-def download_data(tickers, start, end):
-    data = yf.download(tickers, start=start, end=end)['Adj Close']
-    returns = data.pct_change().dropna()
-    return data, returns
+    # Redondear valores a 2 decimales
+    weights_df.iloc[:, 1:] = weights_df.iloc[:, 1:].round(2)
 
-data, returns = download_data(tickers_list, start_date, end_date)
+    # Mostrar tabla de pesos en Streamlit
+    st.dataframe(weights_df.style.format("{:.2%}"), use_container_width=True)
 
-st.subheader("Precios históricos")
-st.line_chart(data)
+    # Graficar los pesos de los portafolios optimizados
+    st.subheader("Portfolio Weights")
+    melted_weights = pd.melt(
+        weights_df, id_vars=["Asset"], var_name="Portfolio", value_name="Weight"
+    )
 
-# Parámetros para Black-Litterman
-st.sidebar.header("Parámetros del Modelo Black-Litterman")
-risk_free_rate = st.sidebar.number_input("Tasa libre de riesgo (%)", value=2.0) / 100
-tau = st.sidebar.number_input("Tau (escala de incertidumbre)", value=0.05)
-P = st.sidebar.text_area("Matriz P (opciones del inversor)", "1 0 -1 0\n0 1 0 -1")
-Q = st.sidebar.text_area("Matriz Q (retornos esperados, en %)", "0.02\n0.01")
+    sns.set_theme(style="whitegrid")
+    colors = sns.color_palette("mako", n_colors=len(st.session_state.resultados_pesos))
+    fig, ax = plt.subplots(figsize=(10, 6))
+    sns.barplot(
+        data=melted_weights, x="Portfolio", y="Weight", hue="Asset", palette=colors, ax=ax
+    )
+    ax.set_title("Weights per Portfolio", fontsize=16)
+    ax.set_ylabel("Weight (%)", fontsize=12)
+    ax.set_xlabel("Portfolio", fontsize=12)
+    ax.legend(loc="upper right", title="Assets")
+    st.pyplot(fig)
+    plt.close()
 
-# Matrices P y Q
-try:
-    P_matrix = np.array([list(map(float, row.split())) for row in P.split("\n") if row])
-    Q_vector = np.array(list(map(float, Q.split()))) / 100
-except ValueError:
-    st.error("Error en las matrices P o Q. Por favor, revisa el formato.")
-    P_matrix, Q_vector = None, None
+    # Ver estadísticas del portafolio
+    st.subheader("Portfolio Statistics")
+    st.text(
+        "Compare the performance of each optimized portfolio using key metrics such as "
+        "expected return, volatility, and Sharpe ratio."
+    )
 
-# Comprobación de la dimensión de la matriz P
-if P_matrix is not None:
-    if P_matrix.shape[1] != len(tickers_list):
-        st.error(f"La matriz P debe tener {len(tickers_list)} columnas para coincidir con los activos del portafolio.")
-    else:
-        # Cálculo de los pesos usando Black-Litterman
-        market_cap = np.ones(len(tickers_list)) / len(tickers_list)  # Capitalización igualitaria
-        cov_matrix = returns.cov().values
-        pi = market_cap @ cov_matrix  # Retornos implícitos del mercado
+    # Calcular estadísticas del portafolio
+    portfolio_stats = st.session_state.metricas(
+        st.session_state.resultados_pesos, st.session_state.returns
+    )
+    st.dataframe(portfolio_stats.style.format("{:.2f}"), use_container_width=True)
 
-        # Modelo Black-Litterman
-        M_inverse = np.linalg.inv(tau * cov_matrix)
-        Omega_inverse = np.linalg.inv(np.diag(np.full(P_matrix.shape[0], tau)))
+    # Botón para proceder al backtesting
+    st.text("Ready? Proceed to backtesting!")
+    col1, col2 = st.columns([1, 0.2])
+    with col2:
+        if st.button("Backtesting!"):
+            st.switch_page("Backtesting")
 
-        try:
-            # Cálculo de la matriz combinada en el modelo de Black-Litterman
-            combined_matrix = M_inverse + P_matrix.T @ Omega_inverse @ P_matrix
-            if np.linalg.det(combined_matrix) == 0:
-                st.error("La matriz combinada no es invertible, su determinante es 0.")
-            else:
-                combined_cov = np.linalg.inv(combined_matrix)
-                combined_returns = combined_cov @ (M_inverse @ pi + P_matrix.T @ Omega_inverse @ Q_vector)
 
-                # Pesos óptimos
-                weights_bl = np.linalg.solve(cov_matrix, combined_returns)
+# ---------------------------------------------------------------------------------------------------#
+#                                      BACKTESTING
 
-                # Normalización de pesos
-                weights_bl /= weights_bl.sum()
+# Agregar sección de backtesting
+if st.session_state.resultados_pesos is not None:
+    st.markdown("## Backtesting :mag:")
+    st.text(
+        "In this section, you can backtest the optimized portfolios within your selected date range. "
+        "Ensure your backtest dates fall within the available data. Full-year backtests are recommended "
+        "for more accurate results."
+    )
 
-                # Mostrar resultados
-                st.subheader("Pesos del Portafolio con Black-Litterman")
-                weights_df = pd.DataFrame({
-                    "Ticker": tickers_list,
-                    "Peso": weights_bl
-                })
-                st.table(weights_df)
+# Inicializar variables de sesión si no están definidas
+st.session_state.setdefault("returns_sp500", None)
+st.session_state.setdefault("returns_bt", None)
 
-                # Gráfico de pesos
-                fig = px.pie(weights_df, values="Peso", names="Ticker", title="Distribución de Pesos")
-                st.plotly_chart(fig)
+# Selección de fechas para el backtesting
+if st.session_state.resultados_pesos is not None:
+    start_bt = st.date_input(
+        "Backtesting start:",
+        value=dt.date(2021, 1, 1),
+        min_value=st.session_state.start_date,
+        max_value=st.session_state.end_date,
+    )
+    end_bt = st.date_input(
+        "Backtesting end:",
+        value=dt.date(2024, 1, 1),
+        min_value=st.session_state.start_date,
+        max_value=st.session_state.end_date,
+    )
 
-                # Cálculo del retorno esperado y riesgo
-                expected_returns = returns.mean()
-                portfolio_return = weights_bl @ expected_returns
-                portfolio_risk = np.sqrt(weights_bl @ cov_matrix @ weights_bl.T)
+    # Filtrar retornos para el rango de fechas seleccionado
+    returns_bt = st.session_state.returns.loc[start_bt:end_bt]
+    st.session_state.returns_bt = returns_bt
 
-                # Visualización adicional
-                st.subheader("Riesgo y Retorno del Portafolio")
-                st.write(f"**Retorno esperado:** {portfolio_return:.2%}")
-                st.write(f"**Riesgo (desviación estándar):** {portfolio_risk:.2%}")
+    if st.button("Backtest!"):
+        # Descargar datos del S&P 500
+        sp500 = (
+            st.session_state.get_asset_data("^GSPC", start_bt, end_bt)
+            .rename(columns={"Close": "^GSPC"})
+        )
+        # Convertir divisas según la moneda objetivo
+        sp500 = st.session_state.convert_to_currency(
+            sp500, start_bt, end_bt, st.session_state.target_currency
+        )
+        # Calcular retornos diarios
+        sp500["^GSPC"] = sp500["^GSPC"].pct_change().dropna()
+        st.session_state.returns_sp500 = sp500[["^GSPC"]]
 
-        except np.linalg.LinAlgError as e:
-            st.error(f"Error al calcular la matriz combinada o sus operaciones: {str(e)}")
-else:
-    st.warning("Por favor, revisa las matrices P y Q para continuar.")
+# Retornos anuales
+if st.session_state.returns_bt is not None and st.session_state.returns_sp500 is not None:
+    st.subheader("Annual Returns")
+    returns_bt_y = st.session_state.returns_bt.resample("Y").apply(lambda x: (1 + x).prod() - 1)
+    
+    def calculate_portfolio_returns(weights_key, returns):
+        weights = np.array(st.session_state[weights_key])
+        return np.dot(weights.T, returns.T).T
 
-# Añadir la visualización de la asignación óptima
-if 'weights_df' in locals():
-    st.subheader("Asignación Óptima de Activos")
-    st.table(weights_df)
+    # Calcular retornos anuales para los portafolios optimizados
+    results_annual = pd.DataFrame({
+        "Minimun Volatility": calculate_portfolio_returns("min_vol_resultados", returns_bt_y),
+        "Maximum Sharpe Ratio": calculate_portfolio_returns("max_sr_resultados", returns_bt_y),
+        "Min. Vol. Target": calculate_portfolio_returns("min_obj_resultados", returns_bt_y),
+        "Equally Weighted": returns_bt_y.mean(axis=1),
+    })
 
-    # Gráfico de la asignación de activos con el portafolio óptimo
-    fig_pie_optimal = px.pie(weights_df, names='Ticker', values='Peso', title="Asignación Óptima de Activos (Modelo Black-Litterman)")
-    st.plotly_chart(fig_pie_optimal)
+    # Agregar datos del S&P 500
+    returns_sp500_y = st.session_state.returns_sp500.resample("Y").apply(lambda x: (1 + x).prod() - 1)
+    results_annual["S&P 500"] = returns_sp500_y["^GSPC"]
+
+    # Graficar retornos anuales
+    results_annual = results_annual.reset_index()
+    results_annual.rename(columns={"index": "Year"}, inplace=True)
+    results_annual_melted = results_annual.melt(id_vars="Year", var_name="Portfolio", value_name="Return")
+    fig_annual = sns.catplot(
+        data=results_annual_melted, x="Year", y="Return", hue="Portfolio", kind="bar", height=6, aspect=2
+    )
+    fig_annual.set_axis_labels("", "Annual Return (%)").fig.suptitle("Annual Return Comparison", y=1.02)
+    st.pyplot(fig_annual)
+    plt.close()
+
+    # Comportamiento diario
+    st.subheader("Daily Returns")
+    results_daily = pd.DataFrame({
+        "Minimun Volatility": calculate_portfolio_returns("min_vol_resultados", returns_bt),
+        "Maximum Sharpe Ratio": calculate_portfolio_returns("max_sr_resultados", returns_bt),
+        "Min. Vol. Target": calculate_portfolio_returns("min_obj_resultados", returns_bt),
+        "Equally Weighted": returns_bt.mean(axis=1),
+    })
+    results_daily["S&P 500"] = st.session_state.returns_sp500["^GSPC"]
+
+    # Valor acumulado diario
+    portfolio_value = (1 + results_daily / 100).cumprod() * 100
+    fig_daily = go.Figure()
+    for col in portfolio_value.columns:
+        fig_daily.add_trace(go.Scatter(x=portfolio_value.index, y=portfolio_value[col], mode="lines", name=col))
+    fig_daily.update_layout(title="Portfolio Value", xaxis_title="Date", yaxis_title="Value")
+    st.plotly_chart(fig_daily, use_container_width=True)
+
+    # Estadísticas de backtesting
+    st.subheader("Backtesting Statistics")
+    rf_rate = st.session_state.rf_rate_us.iloc[-1] if st.session_state.rf_use == "United States" else st.session_state.rf_rate_mx.iloc[-1]
+    stats = st.session_state.metricas(results_daily, rf_rate=rf_rate)
+    st.dataframe(stats)
+
+    # Botón para continuar
+    if st.button("Black-Litterman!"):
+        st.switch_page("pages/3_Black-Litterman Model.py")
+

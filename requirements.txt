@@ -8,4 +8,5 @@ pypfopt
 streamlit
 PyPortfolioOpt
 git+https://github.com/robertmartin8/PyPortfolioOpt.git
+git+https://github.com/robertmartin8/PyPortfolioOpt.git@v1.5.0
 

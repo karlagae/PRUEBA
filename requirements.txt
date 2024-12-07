@@ -5,6 +5,7 @@ exchange_calendars
 openpyxl
 yfinance
 plotly
+streamlit-option-menu
 
 
 

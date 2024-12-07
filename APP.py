@@ -9,8 +9,16 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from plotly import graph_objs as go
 
-# Comprobamos que los datos necesarios están disponibles en la sesión
-if st.session_state.returns is not None:
+# Inicializar variables en session_state si no existen
+if "returns" not in st.session_state:
+    st.session_state.returns = None
+if "resultados_pesos" not in st.session_state:
+    st.session_state.resultados_pesos = None
+if "metricas" not in st.session_state:
+    st.session_state.metricas = None
+
+# Verificamos que los datos necesarios están disponibles
+if st.session_state.returns is not None and st.session_state.resultados_pesos is not None:
     st.markdown("## Optimization Results")
     st.text(
         "The table below contains the weights of each portfolio optimized using "
@@ -71,6 +79,9 @@ if st.session_state.returns is not None:
     with col2:
         if st.button("Backtesting!"):
             st.switch_page("Backtesting")
+else:
+    st.warning("No data available. Please return to the previous step and load the required data.")
+
 
 
 # ---------------------------------------------------------------------------------------------------#

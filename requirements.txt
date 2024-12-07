@@ -5,7 +5,7 @@ exchange_calendars
 openpyxl
 yfinance
 pypfopt
-streamlit
+
 
 
 

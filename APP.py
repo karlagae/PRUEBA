@@ -52,33 +52,35 @@ if P_matrix is not None and Q_vector is not None:
     M_inverse = np.linalg.inv(tau * cov_matrix)
     Omega_inverse = np.linalg.inv(np.diag(np.full(P_matrix.shape[0], tau)))
 
-    
     try:
-        # Cálculo de la matriz combinada en el modelo de Black-Litterman
-        combined_cov = np.linalg.inv(M_inverse + P_matrix.T @ Omega_inverse @ P_matrix)
+        # Verificar si la matriz es invertible antes de calcular la inversa
+        combined_matrix = M_inverse + P_matrix.T @ Omega_inverse @ P_matrix
+        if np.linalg.det(combined_matrix) == 0:
+            st.error("La matriz combinada no es invertible, su determinante es 0.")
+        else:
+            # Cálculo de la matriz combinada en el modelo de Black-Litterman
+            combined_cov = np.linalg.inv(combined_matrix)
+            combined_returns = combined_cov @ (M_inverse @ pi + P_matrix.T @ Omega_inverse @ Q_vector)
+
+            # Pesos óptimos
+            weights_bl = np.linalg.solve(cov_matrix, combined_returns)
+
+            # Normalización de pesos
+            weights_bl /= weights_bl.sum()
+
+            # Mostrar resultados
+            st.subheader("Pesos del Portafolio con Black-Litterman")
+            weights_df = pd.DataFrame({
+                "Ticker": tickers_list,
+                "Peso": weights_bl
+            })
+            st.table(weights_df)
+
+            # Gráfico de pesos
+            fig = px.pie(weights_df, values="Peso", names="Ticker", title="Distribución de Pesos")
+            st.plotly_chart(fig)
     except np.linalg.LinAlgError as e:
-          # Si hay un error al calcular la matriz inversa, se muestra un mensaje de error
-          st.error(f"Error al calcular la matriz inversa: {str(e)}")
-
-    combined_returns = combined_cov @ (M_inverse @ pi + P_matrix.T @ Omega_inverse @ Q_vector)
-
-    # Pesos óptimos
-    weights_bl = np.linalg.solve(cov_matrix, combined_returns)
-
-    # Normalización de pesos
-    weights_bl /= weights_bl.sum()
-
-    # Mostrar resultados
-    st.subheader("Pesos del Portafolio con Black-Litterman")
-    weights_df = pd.DataFrame({
-        "Ticker": tickers_list,
-        "Peso": weights_bl
-    })
-    st.table(weights_df)
-
-    # Gráfico de pesos
-    fig = px.pie(weights_df, values="Peso", names="Ticker", title="Distribución de Pesos")
-    st.plotly_chart(fig)
+        st.error(f"Error al calcular la matriz combinada o sus operaciones: {str(e)}")
 else:
     st.warning("Por favor, revisa las matrices P y Q para continuar.")
 
@@ -93,6 +95,7 @@ st.write(f"Dimensiones de P_matrix: {P_matrix.shape}")
 st.write(f"Dimensiones de Omega_inverse: {Omega_inverse.shape}")
 st.write(f"**Retorno esperado:** {portfolio_return:.2%}")
 st.write(f"**Riesgo (desviación estándar):** {portfolio_risk:.2%}")
+
 # Añadir la visualización de la asignación óptima
 st.subheader("Asignación Óptima de Activos")
 st.table(weights_df)

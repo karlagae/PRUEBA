@@ -7,4 +7,5 @@ yfinance
 pypfopt
 streamlit
 PyPortfolioOpt
+git+https://github.com/robertmartin8/PyPortfolioOpt.git
 

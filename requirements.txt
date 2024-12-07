@@ -7,7 +7,16 @@ yfinance
 plotly
 streamlit-option-menu
 scipy
-
+pandas
+numpy
+yfinance
+scipy
+matplotlib
+datetime
+seaborn
+fredapi
+requests
+plotly
 
 
 

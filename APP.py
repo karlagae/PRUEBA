@@ -1,166 +1,130 @@
-#---------------------------------------------------------------------------------------------------#
-#                                      CARGA DE LIBRERIAS  
-
-import pandas as pd
 import numpy as np
-from numpy.linalg import multi_dot
+import pandas as pd
+import yfinance as yf
 import scipy.optimize as sco
-import yfinance as yf  # Importamos yfinance para obtener datos de Yahoo Finance
-import streamlit as st
-import matplotlib.pyplot as plt
-import seaborn as sns
+from datetime import date
+from scipy import stats
 import plotly.graph_objects as go
-import datetime as dt
+import streamlit as st
 
-#---------------------------------------------------------------------------------------------------#
-#                                             PAGE INFO
+# Símbolos de los ETFs
+symbols = ['LQD', 'EMB', 'VTI', 'EEM', 'GLD']
+numofasset = len(symbols)  # Número de activos
 
-st.set_page_config(
-    page_title="Portfolio Optimization",
-    page_icon="mag"
-)
-st.title("Portfolio Optimization & Backtesting")
+# Descargar los datos de los ETFs
+def download_data(tickers, start_date='2010-01-01', end_date=date.today().strftime('%Y-%m-%d')):
+    data = yf.download(tickers, start=start_date, end=end_date)
+    return data['Close']
 
-#---------------------------------------------------------------------------------------------------#
-# CARGA DE DATOS DE YAHOO FINANCE
+# Descargar datos de 2021 a 2023
+df = download_data(symbols, start_date='2021-01-01', end_date='2023-12-31')
 
-# Definimos los tickers que queremos analizar
-tickers = st.text_input("Introduce los tickers separados por comas (ej. AAPL, MSFT, GOOGL):", "AAPL, MSFT, GOOGL")
+# Calcular rendimientos diarios
+returns = df.pct_change().fillna(0)
 
-# Definimos el rango de fechas
-start_date = st.date_input("Fecha de inicio:", value=dt.date(2021, 1, 1))
-end_date = st.date_input("Fecha de fin:", value=dt.date(2023, 1, 1))
+# Definir el modelo Black-Litterman
 
-if st.button("Cargar datos"):
-    # Cargamos los datos de Yahoo Finance
-    data = yf.download(tickers, start=start_date, end=end_date)['Adj Close']
-    st.session_state.data = data
-    st.session_state.returns = data.pct_change().dropna()
-    st.success("Datos cargados exitosamente.")
-    st.write("Precios de cierre ajustados:")
-    st.dataframe(data.tail())
-    st.write("Retornos diarios:")
-    st.dataframe(st.session_state.returns.tail())
-else:
-    st.warning("Por favor, introduce los tickers y selecciona las fechas para cargar los datos.")
+# Suponemos las expectativas del mercado como el rendimiento medio de los activos
+market_returns = returns.mean() * 252  # Rendimiento anualizado
+market_covariance = returns.cov() * 252  # Covarianza anualizada
 
-#---------------------------------------------------------------------------------------------------#
-#                                 OPTIMIZACION DE PORTAFOLIOS
+# Opiniones del inversor: supongamos que el inversor tiene una opinión sobre ciertos activos
+# Definir las opiniones (por ejemplo, un rendimiento esperado para VTI de 10% y para EEM de 8%)
+opinions = np.array([0.10, 0.08])  # Creencias del inversor sobre VTI y EEM
+P = np.array([[1, 0, 0, 0, 0], [0, 1, 0, 0, 0]])  # Matriz de vistas (impacto en los activos VTI y EEM)
+Q = np.array([0.10, 0.08])  # Opiniones (rendimientos esperados para VTI y EEM)
 
-# Definimos la función portfolio stats para calcular retornos, volatilidad y Sharpe ratio de los portafolios
-def portfolio_stats(weights, returns, return_df=False):
+# Matriz de incertidumbre sobre las opiniones
+tau = 0.025  # Valor de incertidumbre
+M = tau * market_covariance  # Matriz de incertidumbre
+
+# Calcular la matriz ajustada (Black-Litterman)
+middle_term = np.linalg.inv(np.dot(np.dot(P.T, np.linalg.inv(M)), P) + np.linalg.inv(market_covariance))
+adj_returns = np.dot(middle_term, np.dot(np.dot(P.T, np.linalg.inv(M)), Q) + np.dot(np.linalg.inv(market_covariance), market_returns))
+
+# Los rendimientos ajustados ahora contienen las expectativas del mercado y las opiniones del inversor
+adjusted_returns = pd.Series(adj_returns, index=symbols)
+
+# Optimización con Black-Litterman
+
+# Función para calcular estadísticas del portafolio
+def portfolio_stats(weights, expected_returns, covariance_matrix):
     weights = np.array(weights)[:, np.newaxis]
-    port_rets = weights.T @ np.array(returns.mean() * 252)[:, np.newaxis]
-    port_vols = np.sqrt(multi_dot([weights.T, returns.cov() * 252, weights]))
-    sharpe_ratio = port_rets / port_vols
-    resultados = np.array([port_rets, port_vols, sharpe_ratio]).flatten()
-    
-    if return_df:
-        return pd.DataFrame(data=np.round(resultados, 4),
-                            index=["Returns", "Volatility", "Sharpe_Ratio"],
-                            columns=["Resultado"])
-    else:
-        return resultados
+    port_rets = weights.T @ np.array(expected_returns)[:, np.newaxis]
+    port_vols = np.sqrt(np.dot(np.dot(weights.T, covariance_matrix), weights))
+    return np.array([port_rets, port_vols, port_rets / port_vols]).flatten()
 
-st.markdown("## Optimization :muscle:")
+# Función para la optimización del máximo Sharpe Ratio
+def min_sharpe_ratio(weights, expected_returns, covariance_matrix):
+    return -portfolio_stats(weights, expected_returns, covariance_matrix)[2]  # Maximizar el Sharpe ratio
 
-# Definimos las fechas sobre las que queremos optimizar el portafolio
-opt_range = st.slider("Selecciona un rango de fechas:", min_value=start_date, 
-                      max_value=end_date, value=(start_date, end_date),
-                      format="YYYY-MM-DD") 
-st.session_state.start_date_opt, st.session_state.end_date_opt = opt_range
+# Restricciones y límites para la optimización
+bnds = tuple((0, 1) for x in range(numofasset))
+cons = ({'type': 'eq', 'fun': lambda x: sum(x) - 1})  # Los pesos deben sumar 1
+initial_wts = numofasset * [1. / numofasset]  # Inicializar con pesos iguales
 
-st.write("Inicio:", st.session_state.start_date_opt)
-st.write("Fin:", st.session_state.end_date_opt)
+# Optimización para el máximo Sharpe Ratio con los rendimientos ajustados de Black-Litterman
+opt_sharpe = sco.minimize(min_sharpe_ratio, initial_wts, args=(adjusted_returns, market_covariance), method='SLSQP', bounds=bnds, constraints=cons)
 
-if "returns1" not in st.session_state:
-    st.session_state.returns1 = None
+# Obtener los pesos del portafolio con el máximo Sharpe ratio
+max_sharpe_wts = opt_sharpe['x']
 
-# Guardamos los retornos en un nuevo df
-if st.session_state.returns is not None:
-    st.session_state.returns1 = st.session_state.returns.loc[st.session_state.start_date_opt:st.session_state.end_date_opt]
+# Optimización para la mínima volatilidad
+def min_variance(weights, expected_returns, covariance_matrix):
+    return portfolio_stats(weights, expected_returns, covariance_matrix)[1]**2  # Minimizar la varianza (volatilidad al cuadrado)
 
-# ingresar el rendimiento objetivo del portafolio de mínima varianza con rendimiento objetivo
-r_obj = st.number_input(
-    "Especifica el rendimiento objetivo para el portafolio de mínima volatilidad:",
-    value=0.1, min_value=0.0, max_value=1.0
+# Optimización para mínima volatilidad con los rendimientos ajustados de Black-Litterman
+opt_var = sco.minimize(min_variance, initial_wts, args=(adjusted_returns, market_covariance), method='SLSQP', bounds=bnds, constraints=cons)
+
+# Obtener los pesos del portafolio con mínima volatilidad
+min_volatility_wts = opt_var['x']
+
+# Visualización y métricas del portafolio
+st.title("Optimización de Portafolio con Black-Litterman")
+
+st.subheader("Portafolio con Máximo Sharpe Ratio (ajustado por Black-Litterman)")
+st.write(dict(zip(symbols, np.around(max_sharpe_wts, 2))))
+
+st.subheader("Portafolio con Mínima Volatilidad (ajustado por Black-Litterman)")
+st.write(dict(zip(symbols, np.around(min_volatility_wts, 2))))
+
+# Graficar la frontera eficiente con los rendimientos ajustados de Black-Litterman
+# Se sigue el mismo proceso de frontera eficiente como antes, pero usando `adjusted_returns`
+
+targetrets = np.linspace(0.02, 0.30, 100)
+tvols = []
+
+for tr in targetrets:
+    ef_cons = ({
+        'type': 'eq', 'fun': lambda x: portfolio_stats(x, adjusted_returns, market_covariance)[0] - tr
+    }, {
+        'type': 'eq', 'fun': lambda x: np.sum(x) - 1
+    })
+    opt_ef = sco.minimize(min_variance, initial_wts, args=(adjusted_returns, market_covariance), method='SLSQP', bounds=bnds, constraints=ef_cons)
+    tvols.append(np.sqrt(opt_ef['fun']))
+
+targetvols = np.array(tvols)
+
+efport = pd.DataFrame({
+    'targetrets': np.around(100 * targetrets, 2),
+    'targetvols': np.around(100 * targetvols, 2),
+    'targetsharpe': np.around(targetrets / targetvols, 2)
+})
+
+# Graficar la frontera eficiente con Plotly
+fig = go.Figure()
+
+fig.add_trace(go.Scatter(
+    x=efport['targetvols'], y=efport['targetrets'],
+    mode='lines', name='Frontera Eficiente',
+    line=dict(color='blue')
+))
+
+fig.update_layout(
+    title="Frontera Eficiente con Black-Litterman",
+    xaxis=dict(title="Volatilidad Esperada (%)"),
+    yaxis=dict(title="Rendimiento Esperado (%)")
 )
 
-opt_bool = False
-if st.button("¡Vamos!"):
-    opt_bool = True
+st.plotly_chart(fig)
 
-# Definimos la función que nos ayudará a obtener la volatilidad del portafolio
-def get_volatility(weights, returns):
-    return portfolio_stats(weights, returns)[1]
-
-# Función para optimizar el portafolio bajo mínima volatilidad
-def min_vol_opt(returns):
-    cons = ({'type': 'eq', 'fun': lambda x: sum(x) - 1})  # Restricción de que la suma de los pesos sea 1
-    bnds = tuple((0, 1) for x in range(len(returns.columns)))  # Restricción de que los pesos estén entre 0 y 1
-        initial_wts = np.array(len(returns.columns) * [1. / len(returns.columns)])  # Pesos iniciales
-
-    # Optimización
-    result = sco.minimize(get_volatility, initial_wts, args=(returns,), method='SLSQP', bounds=bnds, constraints=cons)
-    return result
-
-if opt_bool and st.session_state.returns1 is not None:
-    # Ejecutamos la optimización
-    optimal_weights = min_vol_opt(st.session_state.returns1)
-
-    # Mostramos los resultados
-    st.write("Pesos óptimos del portafolio:")
-    st.write(optimal_weights.x)
-
-    # Calculamos estadísticas del portafolio óptimo
-    stats = portfolio_stats(optimal_weights.x, st.session_state.returns1, return_df=True)
-    st.write("Estadísticas del portafolio óptimo:")
-    st.dataframe(stats)
-
-    # Gráfica de la distribución de pesos
-    fig = go.Figure(data=[go.Pie(labels=st.session_state.returns1.columns, values=optimal_weights.x, hole=.3)])
-    fig.update_layout(title_text='Distribución de Pesos del Portafolio Óptimo')
-    st.plotly_chart(fig)
-
-#---------------------------------------------------------------------------------------------------#
-#                                 BACKTESTING DEL PORTAFOLIO
-
-st.markdown("## Backtesting :chart_with_upwards_trend:")
-
-if st.button("Ejecutar Backtest"):
-    if st.session_state.data is not None and opt_bool:
-        # Simulamos el rendimiento del portafolio
-        portfolio_returns = (st.session_state.returns1 * optimal_weights.x).sum(axis=1)
-        cumulative_returns = (1 + portfolio_returns).cumprod()
-
-        # Gráfica de rendimiento acumulado
-        plt.figure(figsize=(10, 6))
-        plt.plot(cumulative_returns, label='Rendimiento del Portafolio Óptimo', color='blue')
-        plt.title('Rendimiento Acumulado del Portafolio Óptimo')
-        plt.xlabel('Fecha')
-        plt.ylabel('Rendimiento Acumulado')
-        plt.legend()
-        plt.grid()
-        st.pyplot(plt)
-
-        # Estadísticas del rendimiento del portafolio
-        total_return = cumulative_returns.iloc[-1] - 1
-        annualized_return = (1 + total_return) ** (252 / len(cumulative_returns)) - 1
-        annualized_volatility = portfolio_returns.std() * np.sqrt(252)
-        sharpe_ratio = annualized_return / annualized_volatility
-
-        st.write("Estadísticas del Backtest:")
-        st.write(f"Rendimiento Total: {total_return:.2%}")
-        st.write(f"Rendimiento Anualizado: {annualized_return:.2%}")
-        st.write(f"Volatilidad Anualizada: {annualized_volatility:.2%}")
-        st.write(f"Sharpe Ratio: {sharpe_ratio:.2f}")
-
-        # Gráfica de los retornos diarios del portafolio
-        plt.figure(figsize=(10, 6))
-        plt.plot(portfolio_returns, label='Retornos Diarios del Portafolio Óptimo', color='orange')
-        plt.title('Retornos Diarios del Portafolio Óptimo')
-        plt.xlabel('Fecha')
-        plt.ylabel('Retorno Diario')
-        plt.legend()
-        plt.grid()
-        st.pyplot(plt)

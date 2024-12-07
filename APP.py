@@ -10,14 +10,11 @@ import matplotlib.pyplot as plt
 from plotly import graph_objs as go
 
 # Inicializar variables en session_state si no existen
-if "returns" not in st.session_state:
-    st.session_state.returns = None
-if "resultados_pesos" not in st.session_state:
-    st.session_state.resultados_pesos = None
-if "metricas" not in st.session_state:
-    st.session_state.metricas = None
+st.session_state.setdefault("returns", None)
+st.session_state.setdefault("resultados_pesos", None)
+st.session_state.setdefault("metricas", None)
 
-# Verificamos que los datos necesarios están disponibles
+# Verificar que los datos necesarios están disponibles
 if st.session_state.returns is not None and st.session_state.resultados_pesos is not None:
     st.markdown("## Optimization Results")
     st.text(
@@ -82,12 +79,13 @@ if st.session_state.returns is not None and st.session_state.resultados_pesos is
 else:
     st.warning("No data available. Please return to the previous step and load the required data.")
 
-
-
 # ---------------------------------------------------------------------------------------------------#
 #                                      BACKTESTING
 
-# Agregar sección de backtesting
+# Inicializar variables en session_state si no existen
+st.session_state.setdefault("returns_sp500", None)
+st.session_state.setdefault("returns_bt", None)
+
 if st.session_state.resultados_pesos is not None:
     st.markdown("## Backtesting :mag:")
     st.text(
@@ -96,12 +94,7 @@ if st.session_state.resultados_pesos is not None:
         "for more accurate results."
     )
 
-# Inicializar variables de sesión si no están definidas
-st.session_state.setdefault("returns_sp500", None)
-st.session_state.setdefault("returns_bt", None)
-
-# Selección de fechas para el backtesting
-if st.session_state.resultados_pesos is not None:
+    # Selección de fechas para el backtesting
     start_bt = st.date_input(
         "Backtesting start:",
         value=dt.date(2021, 1, 1),
@@ -116,8 +109,9 @@ if st.session_state.resultados_pesos is not None:
     )
 
     # Filtrar retornos para el rango de fechas seleccionado
-    returns_bt = st.session_state.returns.loc[start_bt:end_bt]
-    st.session_state.returns_bt = returns_bt
+    if st.session_state.returns is not None:
+        returns_bt = st.session_state.returns.loc[start_bt:end_bt]
+        st.session_state.returns_bt = returns_bt
 
     if st.button("Backtest!"):
         # Descargar datos del S&P 500
@@ -133,48 +127,35 @@ if st.session_state.resultados_pesos is not None:
         sp500["^GSPC"] = sp500["^GSPC"].pct_change().dropna()
         st.session_state.returns_sp500 = sp500[["^GSPC"]]
 
-# Retornos anuales
+# Manejo de posibles errores de inicialización
 if st.session_state.returns_bt is not None and st.session_state.returns_sp500 is not None:
     st.subheader("Annual Returns")
-    returns_bt_y = st.session_state.returns_bt.resample("Y").apply(lambda x: (1 + x).prod() - 1)
+    st.write("Aquí iría el análisis de retornos.")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
-    def calculate_portfolio_returns(weights_key, returns):
-        weights = np.array(st.session_state[weights_key])
-        return np.dot(weights.T, returns.T).T
-
-    # Calcular retornos anuales para los portafolios optimizados
-    results_annual = pd.DataFrame({
-        "Minimun Volatility": calculate_portfolio_returns("min_vol_resultados", returns_bt_y),
-        "Maximum Sharpe Ratio": calculate_portfolio_returns("max_sr_resultados", returns_bt_y),
-        "Min. Vol. Target": calculate_portfolio_returns("min_obj_resultados", returns_bt_y),
-        "Equally Weighted": returns_bt_y.mean(axis=1),
-    })
-
-    # Agregar datos del S&P 500
-    returns_sp500_y = st.session_state.returns_sp500.resample("Y").apply(lambda x: (1 + x).prod() - 1)
-    results_annual["S&P 500"] = returns_sp500_y["^GSPC"]
-
-    # Graficar retornos anuales
-    results_annual = results_annual.reset_index()
-    results_annual.rename(columns={"index": "Year"}, inplace=True)
-    results_annual_melted = results_annual.melt(id_vars="Year", var_name="Portfolio", value_name="Return")
-    fig_annual = sns.catplot(
-        data=results_annual_melted, x="Year", y="Return", hue="Portfolio", kind="bar", height=6, aspect=2
-    )
-    fig_annual.set_axis_labels("", "Annual Return (%)").fig.suptitle("Annual Return Comparison", y=1.02)
-    st.pyplot(fig_annual)
-    plt.close()
-
-    # Comportamiento diario
-    st.subheader("Daily Returns")
-    results_daily = pd.DataFrame({
-        "Minimun Volatility": calculate_portfolio_returns("min_vol_resultados", returns_bt),
-        "Maximum Sharpe Ratio": calculate_portfolio_returns("max_sr_resultados", returns_bt),
-        "Min. Vol. Target": calculate_portfolio_returns("min_obj_resultados", returns_bt),
-        "Equally Weighted": returns_bt.mean(axis=1),
-    })
-    results_daily["S&P 500"] = st.session_state.returns_sp500["^GSPC"]
-
     # Valor acumulado diario
     portfolio_value = (1 + results_daily / 100).cumprod() * 100
     fig_daily = go.Figure()

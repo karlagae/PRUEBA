@@ -6,17 +6,20 @@ import scipy.optimize as sco
 import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
+import yfinance as yf  # Importar yfinance para obtener los datos de Yahoo Finance
 
-import yfinance
-
-
-
-
-# Descargar los datos del S&P 500 desde Yahoo Finance
+# Descargar los datos de los activos desde Yahoo Finance
 @st.cache_data
-def load_benchmark_data(symbol, start_date='2000-01-01'):
-    data = yf.download(symbol, start=start_date)
+def load_data(symbols, start_date='2000-01-01'):
+    data = yf.download(symbols, start=start_date)['Adj Close']
     return data
+
+# Cargar los datos del S&P 500 y de otros activos que desees analizar
+symbols = ['^GSPC', 'AAPL', 'MSFT', 'GOOG']  # Ejemplo de símbolos: S&P 500 y grandes empresas
+prices = load_data(symbols)
+
+# Calcular los retornos logarítmicos diarios
+returns = np.log(prices / prices.shift(1))
 
 # Función para calcular estadísticas del portafolio
 def portfolio_stats(weights, returns, return_df=False):
@@ -78,9 +81,6 @@ if "max_sr_resultados" not in st.session_state:
     st.session_state.max_sr_resultados = None
 if "min_obj_resultados" not in st.session_state:
     st.session_state.min_obj_resultados = None
-opt_bool = False  # Valor predeterminado
-
-import streamlit as st
 
 # Ejemplo de control con un checkbox
 opt_bool = st.checkbox("¿Ejecutar optimización?", value=False)
@@ -91,24 +91,24 @@ if st.button("Ejecutar optimización"):
 
 # Verificar que `opt_bool` y los datos estén definidos antes de optimizar
 if opt_bool:
-    # Verifica si los datos necesarios están disponibles (ej. 'returns1' en session_state)
-    if st.session_state.get('returns1') is not None:
+    # Verifica si los datos necesarios están disponibles (ej. 'returns' en session_state)
+    if returns is not None:
         try:
             # Optimización de Maximum Sharpe Ratio (por ejemplo)
-            st.session_state.max_sr_resultados = max_sr_opt(st.session_state.returns1)
+            st.session_state.max_sr_resultados = max_sr_opt(returns)
             st.success("Maximum Sharpe Ratio Portfolio successfully optimized!")
         except Exception as e:
             st.warning(f"An error occurred while optimizing Maximum Sharpe Ratio: {e}")
 
         try:
             # Optimización de Minimum Volatility Portfolio
-            st.session_state.min_obj_resultados = min_vol_obj_opt(st.session_state.returns1, r_obj)
+            r_obj = 0.05  # Definir un retorno objetivo
+            st.session_state.min_obj_resultados = min_vol_obj_opt(returns, r_obj)
             st.success("Minimum Volatility Portfolio with Target Return successfully optimized!")
         except Exception as e:
             st.warning(f"An error occurred while optimizing Minimum Volatility Portfolio: {e}")
     else:
         st.warning("No data found for optimization!")
-
 
 # Mostrar resultados de optimización
 if st.session_state.max_sr_resultados is not None:
@@ -141,13 +141,6 @@ if st.session_state.min_obj_resultados is not None and st.session_state.max_sr_r
         st.error(f"Error comparing weights: {e}")
 
 # Incorporar Backtesting
-# Similar lógica adaptada a los resultados previos...
-import streamlit as st
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-# Incorporar Backtesting
 def backtest_portfolio(weights, returns, initial_capital=10000):
     """
     Realiza el backtesting de un portafolio dado un conjunto de pesos, retornos históricos y capital inicial.
@@ -160,6 +153,17 @@ def backtest_portfolio(weights, returns, initial_capital=10000):
     portfolio_value = initial_capital * (1 + port_returns).cumprod()
     
     return portfolio_value
+
+
+
+
+
+
+
+
+
+
+
 
 # Función para comparar el rendimiento de diferentes portafolios con un benchmark
 def plot_backtest_comparison(returns, weights_max_sr, weights_min_vol_obj, benchmark_returns, initial_capital=10000):

@@ -6,7 +6,5 @@ openpyxl
 yfinance
 pypfopt
 streamlit
-pandas
-numpy
 PyPortfolioOpt
 

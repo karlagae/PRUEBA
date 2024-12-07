@@ -135,8 +135,30 @@ metrics_df = pd.DataFrame({
 st.subheader("Métricas de los Portafolios")
 st.dataframe(metrics_df)
 
+
 # Graficar el rendimiento acumulado de los portafolios
 fig = go.Figure()
 
 # Portafolio con máximo Sharpe
-fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns
+fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns[symbols].dot(max_sharpe_wts),
+                        mode='lines', name='Máximo Sharpe'))
+
+# Portafolio con mínima volatilidad
+fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns[symbols].dot(min_volatility_wts),
+                        mode='lines', name='Mínima Volatilidad'))
+
+# Portafolio igualitario
+equal_weights = np.ones(numofasset) / numofasset
+fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns[symbols].dot(equal_weights),
+                        mode='lines', name='Peso Igual'))
+
+# S&P 500
+fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns['^GSPC'],
+                        mode='lines', name='S&P 500'))
+
+fig.update_layout(title='Rendimiento Acumulado 2021-2023',
+                  xaxis_title='Fecha',
+                  yaxis_title='Rendimiento Acumulado')
+
+# Mostrar la gráfica en Streamlit
+st.plotly_chart(fig)

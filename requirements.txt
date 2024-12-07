@@ -5,3 +5,8 @@ exchange_calendars
 openpyxl
 yfinance
 pypfopt
+streamlit
+pandas
+numpy
+PyPortfolioOpt
+

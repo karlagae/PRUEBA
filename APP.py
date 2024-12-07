@@ -54,11 +54,11 @@ if P_matrix is not None and Q_vector is not None:
 
     
     try:
-    # Cálculo de la matriz combinada en el modelo de Black-Litterman
-    combined_cov = np.linalg.inv(M_inverse + P_matrix.T @ Omega_inverse @ P_matrix)
+        # Cálculo de la matriz combinada en el modelo de Black-Litterman
+        combined_cov = np.linalg.inv(M_inverse + P_matrix.T @ Omega_inverse @ P_matrix)
     except np.linalg.LinAlgError as e:
-    # Si hay un error al calcular la matriz inversa, se muestra un mensaje de error
-    st.error(f"Error al calcular la matriz inversa: {str(e)}")
+          # Si hay un error al calcular la matriz inversa, se muestra un mensaje de error
+          st.error(f"Error al calcular la matriz inversa: {str(e)}")
 
     combined_returns = combined_cov @ (M_inverse @ pi + P_matrix.T @ Omega_inverse @ Q_vector)
 

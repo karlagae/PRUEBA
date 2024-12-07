@@ -1,164 +1,107 @@
 import numpy as np
-import scipy.optimize as sco
-import yfinance as yf
 import pandas as pd
-from datetime import date
-from scipy import stats
-import plotly.graph_objects as go
+import yfinance as yf
 import streamlit as st
+import plotly.graph_objects as go
 
-# Símbolos de los ETFs
-symbols = ['LQD', 'EMB', 'VTI', 'EEM', 'GLD']
-numofasset = len(symbols)  # Número de activos
+# Configuración de la aplicación
+st.title("Optimización de Portafolios y Análisis de ETFs")
+st.sidebar.header("Parámetros de Análisis")
 
-# Descargar los datos de los ETFs
-def download_data(tickers, start_date='2010-01-01', end_date=date.today().strftime('%Y-%m-%d')):
-    data = yf.download(tickers, start=start_date, end=end_date)
-    return data['Close']
+# Selección de ETFs y fechas
+etfs = st.sidebar.text_input("ETFs separados por comas", "SPY, QQQ, IWM, EFA, EEM")
+start_date = st.sidebar.date_input("Fecha de inicio", pd.to_datetime("2015-01-01"))
+end_date = st.sidebar.date_input("Fecha de fin", pd.to_datetime("2023-12-31"))
 
-# Descargar datos de 2021 a 2023
-df = download_data(symbols, start_date='2021-01-01', end_date='2023-12-31')
+# Descarga de datos
+@st.cache_data
+def download_data(symbols, start, end):
+    data = yf.download(symbols, start=start, end=end)["Adj Close"]
+    return data
 
-# Calcular rendimientos diarios
-returns = df.pct_change().fillna(0)
+symbols = [s.strip().upper() for s in etfs.split(",")]
+try:
+    prices = download_data(symbols, start_date, end_date)
+    st.write(f"Datos cargados para: {', '.join(symbols)}")
+except Exception as e:
+    st.error(f"Error descargando datos: {e}")
+    st.stop()
 
-# Función para calcular estadísticas del portafolio
-def portfolio_stats(weights):
-    weights = np.array(weights)[:, np.newaxis]  # Asegura que los pesos estén en una columna
-    port_rets = weights.T @ np.array(returns.mean() * 252)[:, np.newaxis]  # Rendimiento esperado anualizado
-    port_vols = np.sqrt(np.dot(np.dot(weights.T, returns.cov() * 252), weights))  # Volatilidad anualizada
-    return np.array([port_rets, port_vols, port_rets / port_vols]).flatten()  # Retorno, volatilidad y Sharpe ratio
+# Rendimientos diarios
+returns = prices.pct_change().dropna()
 
-# Función para la optimización del máximo Sharpe Ratio
-def min_sharpe_ratio(weights):
-    return -portfolio_stats(weights)[2]  # Maximizar el Sharpe ratio
+# Cálculo de métricas para ETFs individuales
+metrics = pd.DataFrame(index=symbols)
+metrics["Mean Return"] = returns.mean() * 252
+metrics["Volatility"] = returns.std() * np.sqrt(252)
+metrics["Sharpe Ratio"] = metrics["Mean Return"] / metrics["Volatility"]
 
-# Restricciones y límites para la optimización
-bnds = tuple((0, 1) for x in range(numofasset))
-cons = ({'type': 'eq', 'fun': lambda x: sum(x) - 1})  # Los pesos deben sumar 1
-initial_wts = numofasset * [1. / numofasset]  # Inicializar con pesos iguales
+# Visualización de métricas
+st.subheader("Métricas por ETF")
+st.dataframe(metrics.style.format("{:.4f}"))
 
-# Optimización para el máximo Sharpe Ratio
-opt_sharpe = sco.minimize(min_sharpe_ratio, initial_wts, method='SLSQP', bounds=bnds, constraints=cons)
+# Gráfico de precios históricos
+st.subheader("Gráfico de precios históricos")
+fig_prices = go.Figure()
+for symbol in prices.columns:
+    fig_prices.add_trace(go.Scatter(x=prices.index, y=prices[symbol], mode="lines", name=symbol))
+fig_prices.update_layout(title="Precios Históricos", xaxis_title="Fecha", yaxis_title="Precio Ajustado")
+st.plotly_chart(fig_prices)
 
-# Obtener pesos del portafolio con máximo Sharpe ratio
-max_sharpe_wts = opt_sharpe['x']
+# Simulación de portafolios
+def simulate_portfolios(returns, num_portfolios=10000):
+    num_assets = returns.shape[1]
+    results = np.zeros((4, num_portfolios))
+    weights_record = []
+    
+    for i in range(num_portfolios):
+        weights = np.random.random(num_assets)
+        weights /= np.sum(weights)
+        weights_record.append(weights)
+        
+        portfolio_return = np.sum(weights * returns.mean()) * 252
+        portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * 252, weights)))
+        sharpe_ratio = portfolio_return / portfolio_volatility
+        
+        results[0, i] = portfolio_return
+        results[1, i] = portfolio_volatility
+        results[2, i] = sharpe_ratio
+        results[3, i] = i  # Index for weights tracking
+    
+    results_df = pd.DataFrame(results.T, columns=["Return", "Volatility", "Sharpe Ratio", "Index"])
+    return results_df, weights_record
 
-# Optimización para la mínima volatilidad
-def min_variance(weights):
-    return portfolio_stats(weights)[1]**2  # Minimizar la varianza (volatilidad al cuadrado)
+portfolios, weights = simulate_portfolios(returns)
+max_sharpe = portfolios.iloc[portfolios["Sharpe Ratio"].idxmax()]
+min_volatility = portfolios.iloc[portfolios["Volatility"].idxmin()]
 
-# Optimización para mínima volatilidad
-opt_var = sco.minimize(min_variance, initial_wts, method='SLSQP', bounds=bnds, constraints=cons)
+# Frontera eficiente
+st.subheader("Frontera Eficiente")
+fig_efficient = go.Figure()
+fig_efficient.add_trace(go.Scatter(x=portfolios["Volatility"], y=portfolios["Return"], 
+                                    mode="markers", marker=dict(color=portfolios["Sharpe Ratio"], colorscale="Viridis", size=5), name="Portafolios Simulados"))
+fig_efficient.add_trace(go.Scatter(x=[max_sharpe["Volatility"]], y=[max_sharpe["Return"]], 
+                                    mode="markers", marker=dict(color="red", size=10), name="Máximo Sharpe"))
+fig_efficient.add_trace(go.Scatter(x=[min_volatility["Volatility"]], y=[min_volatility["Return"]], 
+                                    mode="markers", marker=dict(color="blue", size=10), name="Mínima Volatilidad"))
+fig_efficient.update_layout(title="Frontera Eficiente", xaxis_title="Volatilidad", yaxis_title="Retorno")
+st.plotly_chart(fig_efficient)
 
-# Obtener pesos del portafolio con mínima volatilidad
-min_volatility_wts = opt_var['x']
-
-# Evaluación de portafolios con los datos de 2021 a 2023
-# Rendimiento acumulado y comparación con el S&P 500
-all_symbols = symbols + ['^GSPC']  # Incluir el S&P 500
-df_all = download_data(all_symbols, start_date='2021-01-01', end_date='2023-12-31')
-
-# Calcular rendimientos diarios
-returns_all = df_all.pct_change().fillna(0)
-
-# Calcular rendimientos acumulados para cada portafolio
-cumulative_returns = (returns_all + 1).cumprod() - 1
-
-# Calcular métricas como sesgo, curtosis, VaR, CVaR, y otros
-def portfolio_metrics(returns):
-    # Rendimiento anualizado
-    annualized_return = np.mean(returns) * 252
-    # Volatilidad anualizada
-    annualized_volatility = np.std(returns) * np.sqrt(252)
-    # Sesgo
-    skewness = stats.skew(returns)
-    # Exceso de curtosis
-    kurtosis = stats.kurtosis(returns)
-    # VaR al 95%
-    var_95 = np.percentile(returns, 5)
-    # CVaR al 95%
-    cvar_95 = returns[returns <= var_95].mean()
-    # Sharpe Ratio
-    sharpe_ratio = annualized_return / annualized_volatility
-    # Sortino Ratio
-    downside_returns = returns[returns < 0]
-    sortino_ratio = annualized_return / np.std(downside_returns) if len(downside_returns) > 0 else np.nan
-    # Drawdown
-    cumulative_returns = (returns + 1).cumprod()
-    peak = cumulative_returns.cummax()
-    drawdown = (cumulative_returns - peak) / peak
-    max_drawdown = drawdown.min()
-
-    return {
-        'Annualized Return': annualized_return,
-        'Annualized Volatility': annualized_volatility,
-        'Skewness': skewness,
-        'Kurtosis': kurtosis,
-        'VaR 95%': var_95,
-        'CVaR 95%': cvar_95,
-        'Sharpe Ratio': sharpe_ratio,
-        'Sortino Ratio': sortino_ratio,
-        'Max Drawdown': max_drawdown
-    }
-
-# Obtener las métricas para cada portafolio
-metrics_max_sharpe = portfolio_metrics(cumulative_returns[symbols].dot(max_sharpe_wts))
-metrics_min_volatility = portfolio_metrics(cumulative_returns[symbols].dot(min_volatility_wts))
-metrics_equal_weight = portfolio_metrics(cumulative_returns[symbols].dot(np.ones(numofasset) / numofasset))
-metrics_sp500 = portfolio_metrics(cumulative_returns['^GSPC'])
-
-# Organizar las métricas en un DataFrame
-metrics_df = pd.DataFrame({
-    'Portfolio': ['Max Sharpe', 'Min Volatility', 'Equal Weight', 'S&P 500'],
-    'Annualized Return': [metrics_max_sharpe['Annualized Return'], metrics_min_volatility['Annualized Return'],
-                         metrics_equal_weight['Annualized Return'], metrics_sp500['Annualized Return']],
-    'Annualized Volatility': [metrics_max_sharpe['Annualized Volatility'], metrics_min_volatility['Annualized Volatility'],
-                             metrics_equal_weight['Annualized Volatility'], metrics_sp500['Annualized Volatility']],
-    'Sharpe Ratio': [metrics_max_sharpe['Sharpe Ratio'], metrics_min_volatility['Sharpe Ratio'],
-                     metrics_equal_weight['Sharpe Ratio'], metrics_sp500['Sharpe Ratio']],
-    'Sortino Ratio': [metrics_max_sharpe['Sortino Ratio'], metrics_min_volatility['Sortino Ratio'],
-                      metrics_equal_weight['Sortino Ratio'], metrics_sp500['Sortino Ratio']],
-    'Max Drawdown': [metrics_max_sharpe['Max Drawdown'], metrics_min_volatility['Max Drawdown'],
-                      metrics_equal_weight['Max Drawdown'], metrics_sp500['Max Drawdown']],
-    'Skewness': [metrics_max_sharpe['Skewness'], metrics_min_volatility['Skewness'],
-                 metrics_equal_weight['Skewness'], metrics_sp500['Skewness']],
-    'Kurtosis': [metrics_max_sharpe['Kurtosis'], metrics_min_volatility['Kurtosis'],
-                 metrics_equal_weight['Kurtosis'], metrics_sp500['Kurtosis']],
-    'VaR 95%': [metrics_max_sharpe['VaR 95%'], metrics_min_volatility['VaR 95%'],
-                metrics_equal_weight['VaR 95%'], metrics_sp500['VaR 95%']],
-    'CVaR 95%': [metrics_max_sharpe['CVaR 95%'], metrics_min_volatility['CVaR 95%'],
-                 metrics_equal_weight['CVaR 95%'], metrics_sp500['CVaR 95%']],
+# Comparación de métricas
+st.subheader("Comparación de Portafolios")
+comparison = pd.DataFrame({
+    "Portafolio": ["Máximo Sharpe", "Mínima Volatilidad"],
+    "Retorno Anualizado": [max_sharpe["Return"], min_volatility["Return"]],
+    "Volatilidad Anualizada": [max_sharpe["Volatility"], min_volatility["Volatility"]],
+    "Sharpe Ratio": [max_sharpe["Sharpe Ratio"], min_volatility["Sharpe Ratio"]],
 })
+st.dataframe(comparison.style.format("{:.4f}"))
 
-# Mostrar el DataFrame con las métricas en Streamlit
-st.subheader("Métricas de los Portafolios")
-st.dataframe(metrics_df)
-
-
-# Graficar el rendimiento acumulado de los portafolios
-fig = go.Figure()
-
-# Portafolio con máximo Sharpe
-fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns[symbols].dot(max_sharpe_wts),
-                        mode='lines', name='Máximo Sharpe'))
-
-# Portafolio con mínima volatilidad
-fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns[symbols].dot(min_volatility_wts),
-                        mode='lines', name='Mínima Volatilidad'))
-
-# Portafolio igualitario
-equal_weights = np.ones(numofasset) / numofasset
-fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns[symbols].dot(equal_weights),
-                        mode='lines', name='Peso Igual'))
-
-# S&P 500
-fig.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns['^GSPC'],
-                        mode='lines', name='S&P 500'))
-
-fig.update_layout(title='Rendimiento Acumulado 2021-2023',
-                  xaxis_title='Fecha',
-                  yaxis_title='Rendimiento Acumulado')
-
-# Mostrar la gráfica en Streamlit
-st.plotly_chart(fig)
+# Gráfico de rendimientos acumulados
+cumulative_returns = (1 + returns).cumprod()
+st.subheader("Rendimientos Acumulados")
+fig_cum_returns = go.Figure()
+for symbol in cumulative_returns.columns:
+    fig_cum_returns.add_trace(go.Scatter(x=cumulative_returns.index, y=cumulative_returns[symbol], mode="lines", name=symbol))
+fig_cum_returns.update_layout(title="Rendimientos Acumulados", xaxis_title="Fecha", yaxis_title="Rendimiento Acumulado")
+st.plotly_chart(fig_cum_returns)

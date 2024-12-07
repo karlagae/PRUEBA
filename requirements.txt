@@ -6,7 +6,7 @@ openpyxl
 yfinance
 plotly
 streamlit-option-menu
-
+scipy
 
 
 

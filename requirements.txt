@@ -4,7 +4,7 @@ xlrd
 exchange_calendars
 openpyxl
 yfinance
-scipy
+
 
 
 

@@ -44,19 +44,17 @@ except ValueError:
 
 # Cálculo de los pesos usando Black-Litterman
 if P_matrix is not None and Q_vector is not None:
-    market_cap = np.ones(len(tickers_list)) / len(tickers_list)  # Capitalización igualitaria
-    cov_matrix = returns.cov().values
-    pi = market_cap @ cov_matrix  # Retornos implícitos del mercado
-
-    # Modelo Black-Litterman
-    M_inverse = np.linalg.inv(tau * cov_matrix)
-    Omega_inverse = np.linalg.inv(np.diag(np.full(P_matrix.shape[0], tau)))
-
-    # Asegurarse de que P_matrix tenga las dimensiones correctas
-    # Verifica que el número de activos coincida con las dimensiones de P_matrix
     if P_matrix.shape[1] != len(tickers_list):
         st.error("La matriz P no tiene el número adecuado de columnas para coincidir con los activos.")
     else:
+        market_cap = np.ones(len(tickers_list)) / len(tickers_list)  # Capitalización igualitaria
+        cov_matrix = returns.cov().values
+        pi = market_cap @ cov_matrix  # Retornos implícitos del mercado
+
+        # Modelo Black-Litterman
+        M_inverse = np.linalg.inv(tau * cov_matrix)
+        Omega_inverse = np.linalg.inv(np.diag(np.full(P_matrix.shape[0], tau)))
+
         try:
             # Cálculo de la matriz combinada en el modelo de Black-Litterman
             combined_matrix = M_inverse + P_matrix.T @ Omega_inverse @ P_matrix
@@ -84,27 +82,26 @@ if P_matrix is not None and Q_vector is not None:
                 fig = px.pie(weights_df, values="Peso", names="Ticker", title="Distribución de Pesos")
                 st.plotly_chart(fig)
 
+                # Cálculo del retorno esperado y riesgo
+                expected_returns = returns.mean()
+                portfolio_return = weights_bl @ expected_returns
+                portfolio_risk = np.sqrt(weights_bl @ cov_matrix @ weights_bl.T)
+
+                # Visualización adicional
+                st.subheader("Riesgo y Retorno del Portafolio")
+                st.write(f"**Retorno esperado:** {portfolio_return:.2%}")
+                st.write(f"**Riesgo (desviación estándar):** {portfolio_risk:.2%}")
+
         except np.linalg.LinAlgError as e:
             st.error(f"Error al calcular la matriz combinada o sus operaciones: {str(e)}")
 else:
     st.warning("Por favor, revisa las matrices P y Q para continuar.")
 
-# Visualización adicional
-st.subheader("Riesgo y Retorno del Portafolio")
-expected_returns = returns.mean()
-portfolio_return = weights_bl @ expected_returns
-portfolio_risk = np.sqrt(weights_bl @ cov_matrix @ weights_bl.T)
-
-st.write(f"Dimensiones de M_inverse: {M_inverse.shape}")
-st.write(f"Dimensiones de P_matrix: {P_matrix.shape}")
-st.write(f"Dimensiones de Omega_inverse: {Omega_inverse.shape}")
-st.write(f"**Retorno esperado:** {portfolio_return:.2%}")
-st.write(f"**Riesgo (desviación estándar):** {portfolio_risk:.2%}")
-
 # Añadir la visualización de la asignación óptima
-st.subheader("Asignación Óptima de Activos")
-st.table(weights_df)
+if 'weights_df' in locals():
+    st.subheader("Asignación Óptima de Activos")
+    st.table(weights_df)
 
-# Gráfico de la asignación de activos con el portafolio óptimo
-fig_pie_optimal = px.pie(weights_df, names='Ticker', values='Peso', title="Asignación Óptima de Activos (Modelo Black-Litterman)")
-st.plotly_chart(fig_pie_optimal)
+    # Gráfico de la asignación de activos con el portafolio óptimo
+    fig_pie_optimal = px.pie(weights_df, names='Ticker', values='Peso', title="Asignación Óptima de Activos (Modelo Black-Litterman)")
+    st.plotly_chart(fig_pie_optimal)

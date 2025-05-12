@@ -1,8 +1,6 @@
-## I N T E G R A N T E S : ##
-## García Acevedo Víctor Manuel 421095874 ##
-## García Hernández Karla Giovana 318316051 ##
-## Hernández Mata Verónica 422110088 ##
-## Tavani Guzmán Camilla 319049211 ##
+
+## García Hernández Karla Giovana ##
+
 
 import yfinance as yf
 import pandas as pd
